@@ -1,75 +1,115 @@
-/// src/QRScanner.js
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 
 function QRScanner() {
-  const [roomId, setRoomId] = useState("");
-  const [scanned, setScanned] = useState(false);
+  const [roomId, setRoomId] = useState(null);
+  const [startTime, setStartTime] = useState(null);
+  const [endTime, setEndTime] = useState(null);
+  const [duration, setDuration] = useState(null);
+  const [step, setStep] = useState("scanStart"); // scanStart → scanEnd → complete
+
   const scannerRef = useRef(null);
   const scannerId = "qr-reader";
 
   useEffect(() => {
-    const initScanner = async () => {
+    const startScanner = async () => {
       const html5QrCode = new Html5Qrcode(scannerId);
       scannerRef.current = html5QrCode;
 
       try {
         const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length > 0) {
-          const cameraId = devices[0].id;
+        if (devices.length === 0) throw new Error("No cameras found.");
 
-          await html5QrCode.start(
-            cameraId,
-            { fps: 10, qrbox: 250 },
-            (decodedText) => {
-              if (!scanned) {
-                setRoomId(decodedText);
-                setScanned(true);
-                html5QrCode.stop().then(() => {
-                  console.log("Scanner stopped.");
-                }).catch((err) => {
-                  console.warn("Stop error (ignored):", err.message);
-                });
-              }
-            },
-            (errorMessage) => {
-              // optional: console.warn(`Scan error: ${errorMessage}`);
+        const cameraId = devices[0].id;
+
+        await html5QrCode.start(
+          cameraId,
+          { fps: 10, qrbox: 250 },
+          (decodedText) => {
+            if (step === "scanStart") {
+              setRoomId(decodedText);
+              setStartTime(new Date());
+              setStep("scanEnd");
+
+              html5QrCode
+                .stop()
+                .then(() => console.log("Scanner stopped after start scan."))
+                .catch((err) =>
+                  console.warn("Stop error (ignored):", err.message)
+                );
+            } else if (step === "scanEnd" && decodedText === roomId) {
+              const end = new Date();
+              setEndTime(end);
+
+              const durationInMinutes = Math.round(
+                (end.getTime() - startTime.getTime()) / 60000
+              );
+              setDuration(durationInMinutes);
+              setStep("complete");
+
+              html5QrCode
+                .stop()
+                .then(() => console.log("Scanner stopped after end scan."))
+                .catch((err) =>
+                  console.warn("Stop error (ignored):", err.message)
+                );
             }
-          );
-        }
+          },
+          (error) => {
+            // optional: console.warn("Scan error:", error);
+          }
+        );
       } catch (err) {
-        console.error("Scanner error:", err);
+        console.error("Camera init error:", err);
       }
     };
 
-    // Add a short delay to ensure the DOM is ready
-    const timeout = setTimeout(initScanner, 500);
+    if (step !== "complete") {
+      startScanner();
+    }
 
     return () => {
-      clearTimeout(timeout);
-      if (scannerRef.current) {
-        scannerRef.current
+      const scanner = scannerRef.current;
+      if (scanner && scanner._isScanning) {
+        scanner
           .stop()
-          .catch(() => console.log("Scanner already stopped."));
+          .then(() => console.log("Scanner stopped on cleanup."))
+          .catch((err) =>
+            console.warn("Stop error (ignored on cleanup):", err.message)
+          );
       }
     };
-  }, [scanned]);
+  }, [step, roomId, startTime]);
 
-  const resetScanner = () => {
-    setRoomId("");
-    setScanned(false);
+  const reset = () => {
+    setRoomId(null);
+    setStartTime(null);
+    setEndTime(null);
+    setDuration(null);
+    setStep("scanStart");
   };
 
   return (
     <div style={{ padding: 30 }}>
-      <h2>QR Code Scanner</h2>
-      {!scanned ? (
-        <div id={scannerId} style={{ width: "300px", marginBottom: "20px" }} />
-      ) : (
+      <h2>Room Cleaning Tracker</h2>
+
+      {step === "complete" ? (
         <div>
-          <h3>Scanned Room ID: {roomId}</h3>
-          <button onClick={resetScanner}>Scan Another</button>
+          <h3>Room: {roomId}</h3>
+          <p>Start Time: {startTime.toLocaleTimeString()}</p>
+          <p>End Time: {endTime.toLocaleTimeString()}</p>
+          <p>Total Time: {duration} minute(s)</p>
+          <button onClick={reset}>Start New Cleaning</button>
         </div>
+      ) : (
+        <>
+          <p>
+            {step === "scanStart"
+              ? "Scan QR code to start cleaning"
+              : "Scan the same QR code again to stop cleaning"}
+          </p>
+          <div id={scannerId} style={{ width: "300px" }} />
+        </>
       )}
     </div>
   );
