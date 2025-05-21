@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 
+// Firebase imports
+import { db } from "./firebase";
+import { collection, addDoc, Timestamp } from "firebase/firestore";
+
 function QRScanner() {
   const [roomId, setRoomId] = useState(null);
   const [startTime, setStartTime] = useState(null);
   const [endTime, setEndTime] = useState(null);
   const [duration, setDuration] = useState(null);
-  const [step, setStep] = useState("scanStart"); // scanStart → scanEnd → complete
+  const [step, setStep] = useState("scanStart");
 
   const scannerRef = useRef(null);
   const scannerId = "qr-reader";
@@ -27,8 +31,10 @@ function QRScanner() {
           { fps: 10, qrbox: 250 },
           (decodedText) => {
             if (step === "scanStart") {
+              // First scan: start cleaning
               setRoomId(decodedText);
-              setStartTime(new Date());
+              const start = new Date();
+              setStartTime(start);
               setStep("scanEnd");
 
               html5QrCode
@@ -38,9 +44,9 @@ function QRScanner() {
                   console.warn("Stop error (ignored):", err.message)
                 );
             } else if (step === "scanEnd" && decodedText === roomId) {
+              // Second scan: end cleaning
               const end = new Date();
               setEndTime(end);
-
               const durationInMinutes = Math.round(
                 (end.getTime() - startTime.getTime()) / 60000
               );
@@ -53,6 +59,20 @@ function QRScanner() {
                 .catch((err) =>
                   console.warn("Stop error (ignored):", err.message)
                 );
+
+              // Save to Firestore
+              const log = {
+                room_id: decodedText,
+                employee_id: "hk_cynthia", // You’ll later replace this with real login data
+                start_time: Timestamp.fromDate(startTime),
+                end_time: Timestamp.fromDate(end),
+                duration_minutes: durationInMinutes,
+                created_at: Timestamp.now(),
+              };
+
+              addDoc(collection(db, "cleaning_logs"), log)
+                .then(() => console.log("✅ Cleaning log saved to Firestore"))
+                .catch((err) => console.error("❌ Error saving log:", err));
             }
           },
           (error) => {
