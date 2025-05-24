@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
+import { useNavigate } from "react-router-dom";
 
-// Firebase imports
+// Firebase
 import { db } from "./firebase";
 import { collection, addDoc, Timestamp } from "firebase/firestore";
 
@@ -14,37 +15,38 @@ function QRScanner() {
 
   const scannerRef = useRef(null);
   const scannerId = "qr-reader";
+  const navigate = useNavigate();
 
   useEffect(() => {
     const startScanner = async () => {
+      // ✅ Clean up any previous scanner
+      if (scannerRef.current && scannerRef.current._isScanning) {
+        await scannerRef.current.stop().catch(() => {});
+        await scannerRef.current.clear().catch(() => {});
+      }
+
       const html5QrCode = new Html5Qrcode(scannerId);
       scannerRef.current = html5QrCode;
 
       try {
         const devices = await Html5Qrcode.getCameras();
         if (devices.length === 0) throw new Error("No cameras found.");
-
         const cameraId = devices[0].id;
 
         await html5QrCode.start(
           cameraId,
           { fps: 10, qrbox: 250 },
-          (decodedText) => {
+          async (decodedText) => {
             if (step === "scanStart") {
-              // First scan: start cleaning
               setRoomId(decodedText);
               const start = new Date();
               setStartTime(start);
               setStep("scanEnd");
 
-              html5QrCode
-                .stop()
-                .then(() => console.log("Scanner stopped after start scan."))
-                .catch((err) =>
-                  console.warn("Stop error (ignored):", err.message)
-                );
+              await html5QrCode.stop().catch(() => {});
+              await html5QrCode.clear().catch(() => {});
+              console.log("Scanner stopped after first scan.");
             } else if (step === "scanEnd" && decodedText === roomId) {
-              // Second scan: end cleaning
               const end = new Date();
               setEndTime(end);
               const durationInMinutes = Math.round(
@@ -53,17 +55,14 @@ function QRScanner() {
               setDuration(durationInMinutes);
               setStep("complete");
 
-              html5QrCode
-                .stop()
-                .then(() => console.log("Scanner stopped after end scan."))
-                .catch((err) =>
-                  console.warn("Stop error (ignored):", err.message)
-                );
+              await html5QrCode.stop().catch(() => {});
+              await html5QrCode.clear().catch(() => {});
+              console.log("Scanner stopped after second scan.");
 
-              // Save to Firestore
+              // Save log to Firestore
               const log = {
                 room_id: decodedText,
-                employee_id: "hk_cynthia", // You’ll later replace this with real login data
+                employee_id: "hk_cynthia",
                 start_time: Timestamp.fromDate(startTime),
                 end_time: Timestamp.fromDate(end),
                 duration_minutes: durationInMinutes,
@@ -71,16 +70,26 @@ function QRScanner() {
               };
 
               addDoc(collection(db, "cleaning_logs"), log)
-                .then(() => console.log("✅ Cleaning log saved to Firestore"))
-                .catch((err) => console.error("❌ Error saving log:", err));
+                .then(() => console.log("✅ Cleaning log saved"))
+                .catch((err) => console.error("❌ Save failed:", err));
+
+              // Navigate to upload screen
+              navigate("/upload", {
+                state: {
+                  roomId: decodedText,
+                  startTime: start,
+                  endTime: end,
+                  duration: durationInMinutes,
+                },
+              });
             }
           },
           (error) => {
-            // optional: console.warn("Scan error:", error);
+            // Optional error logging
           }
         );
       } catch (err) {
-        console.error("Camera init error:", err);
+        console.error("Scanner init error:", err);
       }
     };
 
@@ -89,14 +98,11 @@ function QRScanner() {
     }
 
     return () => {
-      const scanner = scannerRef.current;
-      if (scanner && scanner._isScanning) {
-        scanner
+      if (scannerRef.current && scannerRef.current._isScanning) {
+        scannerRef.current
           .stop()
-          .then(() => console.log("Scanner stopped on cleanup."))
-          .catch((err) =>
-            console.warn("Stop error (ignored on cleanup):", err.message)
-          );
+          .then(() => scannerRef.current.clear())
+          .catch(() => {});
       }
     };
   }, [step, roomId, startTime]);
@@ -110,7 +116,7 @@ function QRScanner() {
   };
 
   return (
-    <div style={{ padding: 30 }}>
+    <div className="scanner-wrapper">
       <h2>Room Cleaning Tracker</h2>
 
       {step === "complete" ? (
@@ -128,7 +134,7 @@ function QRScanner() {
               ? "Scan QR code to start cleaning"
               : "Scan the same QR code again to stop cleaning"}
           </p>
-          <div id={scannerId} style={{ width: "300px" }} />
+          <div id={scannerId} className="scanner-box" />
         </>
       )}
     </div>
